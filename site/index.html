@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diamond Sim — MLB game simulator & prop projections</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="mark">◆</span> DIAMOND SIM
+    <span class="sub" id="dataLine">loading data…</span>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="watch" role="tab">Watch a sim</button>
+    <button class="tab" data-tab="proj" role="tab">Projections &amp; props</button>
+    <button class="tab" data-tab="roster" role="tab">Lineups &amp; pitchers</button>
+  </nav>
+</header>
+
+<section class="picker">
+  <label>Date <select id="dateSel"></select></label>
+  <div id="gameList" class="games"></div>
+  <div class="custom">
+    <select id="awaySel"></select><span>@</span><select id="homeSel"></select>
+    <label class="chk"><input type="checkbox" id="neutralChk"> neutral park</label>
+  </div>
+</section>
+
+<main>
+  <!-- WATCH -->
+  <section id="tab-watch" class="pane active">
+    <div class="board">
+      <div class="score">
+        <div class="trow" id="rowAway"><i class="bar"></i><span class="abbr"></span><span class="pts">0</span></div>
+        <div class="trow" id="rowHome"><i class="bar"></i><span class="abbr"></span><span class="pts">0</span></div>
+      </div>
+      <div class="clockbox"><div id="innLbl">▲ 1ST</div><div id="outsLbl" class="outs"><i></i><i></i><i></i></div></div>
+      <div class="situation"><span id="countLbl"></span><span id="pcLbl"></span><span id="sitLbl">PLAY BALL</span><span id="batLbl"></span></div>
+    </div>
+
+    <div class="fieldwrap">
+      <svg id="field" viewBox="0 0 900 560" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="side">
+        <div class="drivebox mono" id="abBox">AT BAT –</div>
+        <div class="matchup mono" id="matchup"></div>
+        <svg id="zone" viewBox="0 0 220 152"></svg>
+        <table class="line mono" id="lineScore"></table>
+      </div>
+    </div>
+
+    <div class="playbox">
+      <div class="badge" id="playerBadge"></div>
+      <div><div class="ptype mono" id="pType"></div><div class="pdesc" id="pDesc">Press play to start.</div></div>
+    </div>
+    <div class="strip" id="strip"></div>
+
+    <div class="controls">
+      <button id="btnPlay" class="primary">▶ Play</button>
+      <button id="btnStep" title="Next pitch">Next pitch</button>
+      <button id="btnPA">Next at-bat</button>
+      <button id="btnInn">Next inning</button>
+      <button id="btnEnd">Skip to final</button>
+      <label>Speed <select id="speedSel"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="10">10×</option></select></label>
+      <label class="chk"><input type="checkbox" id="pitchChk" checked> show every pitch</label>
+      <button id="btnNew">New sim</button>
+      <span class="mono dim">seed <span id="seedLbl"></span></span>
+      <button id="btnShare" title="Copy a link to this exact simulated game">Copy link</button>
+    </div>
+
+    <div id="finalBox" class="final hidden"></div>
+    <p class="note mono">SIMULATED GAME · NOT A REAL GAME · PITCH LOCATIONS AND BALL FLIGHT ARE ILLUSTRATIVE · NOT TRACKING DATA · <span id="srcNote"></span></p>
+  </section>
+
+  <!-- PROJECTIONS -->
+  <section id="tab-proj" class="pane">
+    <div class="controls">
+      <label>Simulations <select id="nSel"><option selected>1000</option><option>5000</option><option>10000</option><option>20000</option></select></label>
+      <button id="btnRun" class="primary">Run simulations</button>
+      <div class="progress"><i id="prog"></i></div>
+      <span class="dim mono" id="runInfo"></span>
+    </div>
+    <div class="marketrow">
+      <span class="dim">Market lines:</span>
+      <label><span id="mlLblA">Away ML</span> <input id="mMlA" type="number" step="1" placeholder="+120"></label>
+      <label><span id="mlLblH">Home ML</span> <input id="mMlH" type="number" step="1" placeholder="-140"></label>
+      <label><span id="rlLbl">Home run line</span> <input id="mRl" type="number" step="0.5" value="-1.5"></label>
+      <label>Total <input id="mTotal" type="number" step="0.5" placeholder="8.5"></label>
+      <label>F5 total <input id="mF5" type="number" step="0.5" placeholder="4.5"></label>
+    </div>
+    <div id="projOut" class="hidden">
+      <div class="cards" id="gameCards"></div>
+      <div class="charts">
+        <div><h3 id="marginTitle">Home run margin</h3><svg id="marginChart" viewBox="0 0 600 200"></svg></div>
+        <div><h3>Total runs</h3><svg id="totalChart" viewBox="0 0 600 200"></svg></div>
+      </div>
+      <div class="propbar">
+        <h3>Player props</h3>
+        <label>Stat <select id="statSel">
+          <optgroup label="Batters">
+            <option value="hrr" selected>Hits + Runs + RBIs</option><option value="h">Hits</option><option value="tb">Total bases</option>
+            <option value="hr">Home runs</option><option value="r">Runs</option><option value="rbi">RBIs</option>
+            <option value="s">Singles</option><option value="d">Doubles</option><option value="bb">Walks</option>
+            <option value="k">Strikeouts (batter)</option><option value="sb">Stolen bases</option><option value="onbase">Times on base (H+BB+HBP)</option>
+          </optgroup>
+          <optgroup label="Pitchers">
+            <option value="pk">Strikeouts</option><option value="outs">Outs recorded</option><option value="ph">Hits allowed</option>
+            <option value="er">Earned runs</option><option value="pbb">Walks allowed</option><option value="pc">Pitch count</option>
+            <option value="phr">Home runs allowed</option><option value="w">To record the win</option>
+          </optgroup>
+        </select></label>
+        <label>Team <select id="teamFilter"><option value="">Both</option></select></label>
+        <label class="chk"><input type="checkbox" id="penChk"> include relievers</label>
+        <button id="btnCsv" title="Download every player's projections for every stat">Download CSV</button>
+        <span class="dim">Type the sportsbook line to get the model's over/under probability and fair odds.</span>
+      </div>
+      <table class="props" id="propTable"></table>
+    </div>
+    <p class="note">Probabilities come from replaying the game plate appearance by plate appearance, over and over, with the lineups and pitchers on the Lineups tab. The model is a simple simulation and hasn't been shown to beat the market. Treat a gap between the model and a line as a reason to dig in, not as a bet.</p>
+  </section>
+
+  <!-- LINEUPS -->
+  <section id="tab-roster" class="pane">
+    <p class="dim" id="lineupNote"></p>
+    <div class="rosters" id="rosters"></div>
+  </section>
+</main>
+
+<footer class="mono dim" id="footer">
+  Data: <a href="https://statsapi.mlb.com" target="_blank" rel="noopener">MLB Stats API</a> play-by-play, box scores, schedule, probable pitchers, lineups &amp; rosters; historical play-by-play from <a href="https://www.retrosheet.org" target="_blank" rel="noopener">Retrosheet</a> (free of charge from and copyrighted by Retrosheet, via the Chadwick Bureau). Not affiliated with MLB. For entertainment and research.
+</footer>
+
+<script src="js/sim.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

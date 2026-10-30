@@ -1,0 +1,57 @@
+name: Refresh data and deploy
+
+on:
+  schedule:
+    - cron: "23 13 * * *"   # ~9am ET: last night's results, today's probable pitchers
+    - cron: "41 19 * * *"   # ~3:40pm ET: lineups for day/early games
+    - cron: "41 21 * * *"   # ~5:40pm ET: lineups for night games
+  workflow_dispatch:         # "Run workflow" button in the Actions tab
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: pip install -r requirements.txt
+      # Finished games are condensed to small JSON files and cached, so each run only downloads new games.
+      - uses: actions/cache@v4
+        with:
+          path: data_raw/statsapi
+          key: statsapi-${{ github.run_id }}
+          restore-keys: statsapi-
+      - name: Build model from the MLB Stats API
+        id: build
+        continue-on-error: true
+        run: python scripts/build_data.py
+      - name: Note a failed build
+        if: steps.build.outcome == 'failure'
+        run: echo "::warning::MLB Stats API build failed; deploying the model already in the repo."
+      - name: Calibrate run scoring, hits, home field and pitcher usage
+        run: node scripts/calibrate.js site/data/model.json 3000
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
