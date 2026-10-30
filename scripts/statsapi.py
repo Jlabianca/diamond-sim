@@ -144,7 +144,7 @@ def condense(sched_row):
             pos = (pl.get("position") or {}).get("abbreviation", "")
             rows.append({
                 "pid": pid, "name": pl["person"].get("fullName", str(pid)), "side": s, "home": s,
-                "team": side_team[s], "opp": side_team[1 - s], "slot": slot, "start": int(slot > 0 and pid in order),
+                "team": side_team[s], "opp": side_team[1 - s], "slot": slot, "start": int(slot > 0),  # battingOrder "N00" = started in slot N (subs are "N01"...)
                 "pos": pos if pos in POS else ("P" if pt else ""),
                 "PA": bt.get("plateAppearances", 0), "AB": bt.get("atBats", 0), "H": bt.get("hits", 0),
                 "D": bt.get("doubles", 0), "T": bt.get("triples", 0), "HR": bt.get("homeRuns", 0),
@@ -205,7 +205,7 @@ def load_season(raw_dir, season, asof=None, workers=12, log=print):
             p["date"], p["season"] = c["game"]["date"], season
         pas += c["pa"]
         for b in c["box"]:
-            b.update({"game": c["game"]["game"], "date": c["game"]["date"], "season": season})
+            b.update({"game": c["game"]["game"], "date": c["game"]["date"], "season": season, "start": int(b["slot"] > 0)})
         boxes += c["box"]
         hands.update({int(k): v for k, v in c["hands"].items()})
     return pd.DataFrame(games), pd.DataFrame(pas), pd.DataFrame(boxes), hands
