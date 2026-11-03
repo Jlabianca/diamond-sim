@@ -218,3 +218,5 @@ table.pc-t th:nth-child(-n+3), table.pc-t td:nth-child(-n+3) { text-align: left;
 table.pc-t tr.hitrow td { background: #12261c; }
 .lu .mv button[data-pcard] { font-style: italic; font-weight: 700; color: var(--accent); }
 @media (max-width: 860px) { .pc-rates { grid-template-columns: repeat(3, 1fr); } .pcard { padding: 10px 6px; } table.pc-t td:nth-child(3), table.pc-t th:nth-child(3) { display: none; } }
+
+.tagpill.tired { color: #f2c14e; border-color: #5a4a1e; }

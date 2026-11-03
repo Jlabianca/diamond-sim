@@ -20,7 +20,10 @@ function measure(nGames, seed) {
     if (h === a) h = teams[(teams.indexOf(a) + 1) % teams.length];
     const out = S.defaultOut(model, [a, h]);
     const outSet = new Set(out);
-    const pickSP = (t) => { const rot = (model.teams[t].rotation || []).filter((id) => !outSet.has(id)); return rot.length ? rot[Math.floor(R() * rot.length)] : S.guessStarter(model, t, outSet); };
+    const pickSP = (t) => { const idx0 = S.index(model);
+      let rot = (model.teams[t].rotation || []).filter((id) => !outSet.has(id));
+      if (rot.some((id) => (idx0[id].pc || 0) >= 60)) rot = rot.filter((id) => (idx0[id].pc || 0) >= 60); /* real starters only */
+      return rot.length ? rot[Math.floor(R() * rot.length)] : S.guessStarter(model, t, outSet); };
     const sp = { away: pickSP(a), home: pickSP(h) };
     const idx = S.index(model);
     const lineups = { away: S.guessLineup(model, a, idx[sp.home].throws || "R", outSet), home: S.guessLineup(model, h, idx[sp.away].throws || "R", outSet) };

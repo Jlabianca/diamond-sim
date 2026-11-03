@@ -32,7 +32,9 @@
 
   function guessStarter(model, team, out) {
     const T = model.teams[team], idx = index(model);
-    const rot = (T.rotation || []).filter((id) => idx[id] && !out.has(id));
+    let rot = (T.rotation || []).filter((id) => idx[id] && !out.has(id));
+    const real = rot.filter((id) => (idx[id].pc || 0) >= 60); // skip openers when guessing the next starter
+    if (real.length) rot = real;
     if (!rot.length) {
       const sp = T.players.filter((p) => p.role === "SP" && !out.has(p.id));
       return sp.length ? sp[0].id : (T.players.find((p) => isPitcher(p) && !out.has(p.id)) || {}).id;
@@ -42,9 +44,24 @@
     return best;
   }
 
-  function defaultOut(model, teams) {
+  // Is a reliever too worn out to pitch on `date` (YYYY-MM-DD)? Returns the reason, or "".
+  function fatigue(p, date) {
+    if (!p || !p.apps || !date || p.pos !== "P") return "";
+    const day = (d) => Math.round((Date.UTC(+date.slice(0, 4), +date.slice(5, 7) - 1, +date.slice(8, 10)) - Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10))) / 864e5);
+    const by = {};
+    for (const [d, pc] of p.apps) { const k = day(d); if (k >= 1 && k <= 3) by[k] = (by[k] || 0) + pc; }
+    if (by[1] >= 30) return `${by[1]} pitches yesterday`;
+    if (by[1] && by[2]) return "pitched the last two days";
+    const three = (by[1] || 0) + (by[2] || 0) + (by[3] || 0);
+    if (three >= 50) return `${three} pitches in the last 3 days`;
+    return "";
+  }
+  function defaultOut(model, teams, date) {
     const out = [];
-    for (const t of teams) for (const p of model.teams[t].players) if (p.status) out.push(p.id);
+    for (const t of teams) for (const p of model.teams[t].players) {
+      if (p.status) out.push(p.id);
+      else if (p.role === "RP" && fatigue(p, date)) out.push(p.id);
+    }
     return out;
   }
 
@@ -167,7 +184,8 @@
       const sp = st[s].pitcher;
       const b = bx(sp, s); b.pitched = true; b.entered = { inn: 1, lead: 0 };
       const mean = sp.pc || L.sp_pitches || 88;
-      st[s].pcLimit = Math.max(45, Math.min(115, mean + (C.pc_adj || 0) + gauss(R) * 8));
+      // openers and bulk relievers get pulled early: the floor scales with how long he usually goes
+      st[s].pcLimit = Math.max(Math.min(45, mean * 0.8), Math.min(115, mean + (mean >= 60 ? C.pc_adj || 0 : 0) + gauss(R) * (mean >= 60 ? 8 : 5)));
     }
     let lead = [], decided = null; // track lead changes for W/L
     let inn = 1, half = 0, f5 = null, ended = false, lastInn = 1;
@@ -619,7 +637,7 @@
     return { joint: j / n, single, n };
   }
 
-  const API = { legHits, parlayProb, assignPositions, simulateGame, simulateMany, summarize, prepare, defaults, defaultOut, guessStarter, guessLineup, index, rng, BAT_STATS, PIT_STATS };
+  const API = { fatigue, legHits, parlayProb, assignPositions, simulateGame, simulateMany, summarize, prepare, defaults, defaultOut, guessStarter, guessLineup, index, rng, BAT_STATS, PIT_STATS };
   if (typeof module !== "undefined" && module.exports) module.exports = API;
   else root.MLBSim = API;
 })(typeof self !== "undefined" ? self : this);

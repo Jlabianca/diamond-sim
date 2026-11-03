@@ -38,7 +38,8 @@ The site is fully static: one JSON model file and plain JavaScript, with no serv
   - Each rate is pulled toward the league average by a stat-specific amount, so strikeout rate trusts a small sample and home-run rate needs a big one. Pitchers are pulled toward the starter or reliever average.
   - Home-park effects are removed from each player's rates and added back for the park of the game being simmed.
 - **Base stealing**: each runner's attempt rate and success rate.
-- **Starters**: average pitch count. **Relievers**: role (closer, setup, middle, long, low-leverage), from saves and run prevention.
+- **Starters**: average pitch count in recent starts. Openers and bulk relievers get the length of their actual recent outings, so a 20-pitch opener isn't projected like a 90-pitch starter. **Relievers**: role (closer, setup, middle, long, low-leverage), from saves and run prevention, plus their last few appearances for fatigue.
+- **Rosters**: today's 40-man rosters decide who's on each team, so trades, free-agent signings and injured-list moves show up right away. A player who changed teams brings his stats with him.
 - **League**: platoon splits (L/R batter × L/R pitcher), double-play, sacrifice-fly and error rates, pitches per plate appearance, and park factors for each stadium.
 
 `site/js/sim.js` then plays the game one plate appearance at a time:
@@ -58,7 +59,7 @@ The lineups and starting pitchers that actually played were used, since they're 
 | | Model | Baseline |
 |---|---|---|
 | Picks the winner | 55.4% | – |
-| Win probability Brier score (lower is better) | 0.2441 | 0.2492 (home team 53.5%) |
+| Win probability Brier score (lower is better) | 0.2443 | 0.2492 (home team 53.5%) |
 | Total runs error (MAE) | 3.51 | 3.53 (league average) |
 | NRFI Brier score | 0.2496 | 0.2506 (league rate) |
 
@@ -66,18 +67,18 @@ Player props compare the model's mean with each player's season-to-date average 
 
 | Stat | Model MAE | Season-avg MAE | Model corr | Season-avg corr | Over: predicted / actual |
 |---|---|---|---|---|---|
-| Batter H+R+RBI | 1.520 | 1.529 | 0.137 | 0.116 | o1.5: 46.9% / 46.6% |
+| Batter H+R+RBI | 1.519 | 1.529 | 0.141 | 0.116 | o1.5: 46.8% / 46.6% |
 | Batter hits | 0.682 | 0.688 | 0.119 | 0.107 | o0.5: 61.7% / 61.4% |
 | Batter total bases | 1.366 | 1.382 | 0.121 | 0.111 | o1.5: 35.9% / 36.0% |
 | Batter home runs | 0.225 | 0.226 | 0.130 | 0.137 | o0.5: 11.9% / 12.5% |
 | Batter runs | 0.582 | 0.582 | 0.148 | 0.113 | o0.5: 39.0% / 38.4% |
 | Batter RBIs | 0.639 | 0.638 | 0.110 | 0.097 | o0.5: 30.5% / 30.1% |
-| Pitcher strikeouts | 1.803 | 1.840 | 0.377 | 0.334 | model line: 48.9% / 50.3% |
-| Pitcher outs | 2.873 | 2.898 | 0.258 | 0.257 | model line: 53.5% / 52.9% |
-| Pitcher hits allowed | 1.724 | 1.787 | 0.211 | 0.161 | model line: 49.0% / 44.7% |
-| Pitcher earned runs | 1.648 | 1.622 | 0.137 | 0.142 | o0.5: 86.8% / 84.5% |
+| Pitcher strikeouts | 1.801 | 1.840 | 0.380 | 0.334 | model line: 49.0% / 51.0% |
+| Pitcher outs | 2.873 | 2.898 | 0.272 | 0.257 | model line: 53.5% / 53.9% |
+| Pitcher hits allowed | 1.719 | 1.787 | 0.214 | 0.161 | model line: 48.8% / 45.9% |
+| Pitcher earned runs | 1.644 | 1.622 | 0.145 | 0.142 | o0.5: 86.4% / 84.5% |
 
-The probabilities are well calibrated for batter props: when the model says 45% for H+R+RBI over 1.5, it happens about 44% of the time. Pitcher strikeouts are the strongest prop. Hits allowed by starters run about 4 points too high.
+The probabilities are well calibrated for batter props: when the model says 45% for H+R+RBI over 1.5, it happens about 44% of the time. Pitcher strikeouts are the strongest prop. Hits allowed by starters run about 3 points too high.
 
 **Same-game parlays.** The parlay builder's joint probabilities hold up. Across the same 751 games, the model's chance that a combo hits matched how often it really hit. Multiplying the legs as if they were unrelated was badly off:
 
@@ -121,10 +122,10 @@ The first build downloads two seasons of games (about 10,000 small requests, sev
 ## Known limitations / ideas
 
 - No pitch-type, velocity or Statcast quality-of-contact data. Hitters' platoon splits are the league's, not individual. There's no team defense or catcher framing, and no weather or wind.
-- The bullpen doesn't know who's tired. Uncheck a reliever on the Lineups tab if he's unavailable.
+- Bullpen fatigue uses simple rules: a reliever starts out unavailable after 30+ pitches the day before, pitching on back-to-back days, or 50+ pitches over three days. Recheck him on the Lineups tab if you know better.
 - Pinch-hitters and defensive subs are generic (a random bench bat late in the game), and there's no bunting or intentional walking.
 - Pitch locations and ball flight in the replay are illustrative, not tracking data.
-- Early in the season, last season carries more weight, and players who changed teams bring their old rates with them.
+- Early in the season, last season carries more weight. Players who changed teams bring their old rates with them, which ignores the change of park and lineup around them.
 - Market lines aren't in the data. Type them in on the Projections tab.
 - Ideas: pull live prop lines from an odds API, add a slate view for every game of the day, use Statcast batted-ball quality, and track the model's results over the season.
 

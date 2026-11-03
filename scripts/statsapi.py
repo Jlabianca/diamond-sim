@@ -229,7 +229,7 @@ def rosters(season):
     """Current 40-man rosters with status: {abbr: [{pid, name, pos, status}]}. Active roster players have status 'A'."""
     out = {}
     for abbr, tid, *_ in TEAMS:
-        js = get(f"/v1/teams/{tid}/roster", {"rosterType": "40Man", "season": season}) or {}
+        js = get(f"/v1/teams/{tid}/roster", {"rosterType": "40Man"}) or {}  # today's roster
         out[abbr] = [{"pid": r["person"]["id"], "name": r["person"].get("fullName", ""),
                       "pos": (r.get("position") or {}).get("abbreviation", ""),
                       "status": (r.get("status") or {}).get("code", ""),

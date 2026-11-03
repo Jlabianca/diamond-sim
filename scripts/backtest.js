@@ -20,7 +20,8 @@ for (const mf of modelFiles) {
     if (!A) continue;
     const idx = S.index(model);
     if (![...g.away_lineup, ...g.home_lineup, g.away_sp, g.home_sp].every((id) => idx[id])) continue;
-    const o = { away: g.away, home: g.home, sp: { away: g.away_sp, home: g.home_sp }, lineups: { away: g.away_lineup, home: g.home_lineup }, out: [], seed: 777 };
+    const keep = new Set([...g.away_lineup, ...g.home_lineup, g.away_sp, g.home_sp]);
+    const o = { away: g.away, home: g.home, sp: { away: g.away_sp, home: g.home_sp }, lineups: { away: g.away_lineup, home: g.home_lineup }, out: S.defaultOut(model, [g.away, g.home], g.date).filter((id) => !keep.has(id)), seed: 777 };
     const r = S.summarize(S.simulateMany(model, o, NSIM));
     const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
     const players = [];

@@ -85,7 +85,7 @@
     cur = { away: g.away, home: g.home, sched: g.id ? g : null };
     $("awaySel").value = g.away; $("homeSel").value = g.home;
     $("neutralChk").checked = false;
-    outSet = new Set(MLBSim.defaultOut(model, [g.away, g.home]));
+    outSet = new Set(MLBSim.defaultOut(model, [g.away, g.home], gameDate()));
     resetLineups();
     document.documentElement.style.setProperty("--away", col(g.away));
     document.documentElement.style.setProperty("--home", col(g.home));
@@ -105,6 +105,7 @@
     for (const side of ["away", "home"]) { for (const id of lineups[side]) outSet.delete(id); if (sps[side]) outSet.delete(sps[side]); }
   }
   const randSeed = () => Math.floor(Math.random() * 1e9);
+  const gameDate = () => (cur.sched ? cur.sched.date : todayET());
 
   // ---------------- tabs ----------------
   const activeTab = () => (document.querySelector(".tab.active") || {}).dataset.tab;
@@ -1099,7 +1100,7 @@
       const t = cur[side];
       notes.push(`${t}: ${cur.posted && cur.posted[side] ? "posted lineup" : "projected lineup (their most recent one against a " + (P(sps[side === "away" ? "home" : "away"]).throws === "L" ? "lefty" : "righty") + ")"}, ${sg && sg[side + "_sp"] === sps[side] ? "probable starter" : "starter guessed from the rotation"}`);
     }
-    $("lineupNote").textContent = notes.join(" · ") + ". Change the order, swap hitters or the starter, or mark players unavailable. Changes apply to both tabs.";
+    $("lineupNote").textContent = notes.join(" · ") + ". Relievers who are worn out (30+ pitches yesterday, back-to-back days, or 50+ pitches in three days) start unchecked. Change the order, swap hitters or the starter, or mark players unavailable. Changes apply to both tabs.";
     $("rosters").innerHTML = ["away", "home"].map((side) => teamBlock(side)).join("");
     $("rosters").querySelectorAll("select[data-slot]").forEach((s) => (s.onchange = () => {
       const side = s.dataset.side, i = +s.dataset.slot, id = s.value;
@@ -1159,7 +1160,7 @@
     h += `<h4>BENCH · uncheck = unavailable</h4><div class="bench">` + bench.map((p) => `<label class="${outSet.has(p.id) ? "off" : ""}" title="${p.status || ""}"><input type="checkbox" data-out="${p.id}" ${outSet.has(p.id) ? "" : "checked"}>${p.short}${p.status ? ` <span class="tagpill">${p.status}</span>` : ""}</label>`).join("") + `</div>`;
     const pen = (T.bullpen || []).map((x) => ({ p: P(x.id), role: x.role })).filter((x) => x.p.id);
     h += `<h4>BULLPEN · uncheck = unavailable</h4><div class="pen hdr dim"><span></span><span>Reliever</span><span>Role</span><span>ERA</span><span>K/9</span></div>` +
-      pen.map(({ p, role }) => `<div class="pen ${outSet.has(p.id) ? "off" : ""}"><span><input type="checkbox" data-out="${p.id}" ${outSet.has(p.id) ? "" : "checked"}></span><span><a href="#" class="plink" data-pcard="${p.id}">${p.name}</a> <span class="dim">${p.throws}</span>${p.status ? ` <span class="tagpill">${p.status}</span>` : ""}</span><span>${role}</span><span>${p.avg && p.avg.era != null ? p.avg.era.toFixed(2) : "–"}</span><span>${p.avg && p.avg.k9 != null ? p.avg.k9 : "–"}</span></div>`).join("");
+      pen.map(({ p, role }) => { const tired = MLBSim.fatigue(P(p.id), gameDate()); return `<div class="pen ${outSet.has(p.id) ? "off" : ""}"><span><input type="checkbox" data-out="${p.id}" ${outSet.has(p.id) ? "" : "checked"}></span><span><a href="#" class="plink" data-pcard="${p.id}">${p.name}</a> <span class="dim">${p.throws}</span>${p.status ? ` <span class="tagpill">${p.status}</span>` : ""}${tired ? ` <span class="tagpill tired" title="${tired}">tired · ${tired}</span>` : ""}</span><span>${role}</span><span>${p.avg && p.avg.era != null ? p.avg.era.toFixed(2) : "–"}</span><span>${p.avg && p.avg.k9 != null ? p.avg.k9 : "–"}</span></div>`; }).join("");
     const injured = T.players.filter((p) => p.status && !pen.some((x) => x.p.id === p.id) && !bench.includes(p) && !lu.includes(p.id));
     if (injured.length) h += `<h4>NOT AVAILABLE</h4><div class="bench">` + injured.map((p) => `<label class="${outSet.has(p.id) ? "off" : ""}"><input type="checkbox" data-out="${p.id}" ${outSet.has(p.id) ? "" : "checked"}>${p.short} <span class="tagpill">${p.status}</span></label>`).join("") + `</div>`;
     return h + `</div>`;

@@ -3,3 +3,4 @@ __pycache__/
 backtest/model_*.json
 backtest/actuals.json
 .DS_Store
+backtest/logs.json

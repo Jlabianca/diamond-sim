@@ -319,17 +319,23 @@ def main():
         tw = tall[tall.date >= cut21]
         pa_sum = tall[tall.date >= win_cut].groupby("pid").PA.sum()
         bf_sum = tall[tall.date >= win_cut].groupby("pid").BF.sum()
-        hit_ids = [p for p in tw[tw.PA > 0].groupby("pid").PA.sum().sort_values(ascending=False).index
-                   if last_team.get(p) == abbr and not (bf_sum.get(p, 0) > 2 * pa_sum.get(p, 0) + 5)]
-        pit_ids = [p for p in tw[tw.BF > 0].groupby("pid").BF.sum().sort_values(ascending=False).index
-                   if last_team.get(p) == abbr and not (pa_sum.get(p, 0) > 2 * bf_sum.get(p, 0) + 5)]
-        if rosters and rosters.get(abbr):
-            for r in rosters[abbr]:
-                pid = str(r["pid"])
-                if r["pos"] in ("P", "TWP") and pid not in pit_ids and r["status"] == "A":
-                    pit_ids.append(pid)
-                if r["pos"] not in ("P",) and pid not in hit_ids and r["status"] == "A":
-                    hit_ids.append(pid)
+        use_rosters = bool(rosters) and len(rosters.get(abbr) or []) >= 20
+        if use_rosters:
+            # 40-man rosters decide who is on the team, so trades and free-agent signings show up right away
+            rpa = recent.groupby("pid").PA.sum().to_dict()
+            rbf = recent.groupby("pid").BF.sum().to_dict()
+            tot_pa = b.groupby("pid").PA.sum().to_dict()
+            tot_bf = b.groupby("pid").BF.sum().to_dict()
+            hit_ids = [str(r["pid"]) for r in rosters[abbr] if r["pos"] != "P"]
+            pit_ids = [str(r["pid"]) for r in rosters[abbr] if r["pos"] in ("P", "TWP")]
+            hit_ids.sort(key=lambda p: (-rpa.get(p, 0), -tot_pa.get(p, 0)))
+            pit_ids.sort(key=lambda p: (-rbf.get(p, 0), -tot_bf.get(p, 0)))
+        else:
+            hit_ids = [p for p in tw[tw.PA > 0].groupby("pid").PA.sum().sort_values(ascending=False).index
+                       if last_team.get(p) == abbr and not (bf_sum.get(p, 0) > 2 * pa_sum.get(p, 0) + 5)]
+            pit_ids = [p for p in tw[tw.BF > 0].groupby("pid").BF.sum().sort_values(ascending=False).index
+                       if last_team.get(p) == abbr and not (pa_sum.get(p, 0) > 2 * bf_sum.get(p, 0) + 5)]
+        member = set(hit_ids) | set(pit_ids)
         status = {}
         for pid in set(hit_ids) | set(pit_ids):
             if pid in roster_status:
@@ -338,8 +344,6 @@ def main():
                     status[pid] = "Traded"
                 elif code != "A":
                     status[pid] = desc or code
-            elif rosters:
-                status[pid] = "Not on 40-man"
         # lineups vs RHP / LHP: most recent starting nine against that hand
         lineups = {}
         tg_all = games[((games.away == abbr) | (games.home == abbr))].sort_values("date", ascending=False)
@@ -350,23 +354,24 @@ def main():
                     continue
                 st = tall[(tall.game == g.game) & (tall.start == 1) & (tall.slot > 0)].sort_values("slot")
                 if len(st) == 9:
-                    lineups[hand] = [{"id": r.pid, "pos": r.pos if r.pos else "DH"} for r in st.itertuples()]
+                    # players who have since left are dropped; the site fills the hole from the bench
+                    lineups[hand] = [{"id": r.pid, "pos": r.pos if r.pos else "DH"} for r in st.itertuples() if r.pid in member]
                     break
         # rotation: starters in the window, most recent first
-        starts = tall[(tall.GS == 1)].sort_values("date", ascending=False)
+        starts = b[(b.GS == 1) & b.pid.isin(pit_ids)].sort_values("date", ascending=False)  # starts for any team
         rot = []
         for r in starts.itertuples():
-            if r.pid not in rot and last_team.get(r.pid) == abbr:
+            if r.pid not in rot and not status.get(r.pid):
                 rot.append(r.pid)
             if len(rot) >= 5:
                 break
         last_start = starts.groupby("pid").date.max().to_dict()
         # bullpen roles
-        rel = tb[(tb.GS == 0) & (tb.BF > 0)]
+        rel = recent[(recent.GS == 0) & (recent.BF > 0) & recent.pid.isin(pit_ids)]
         relagg = rel.groupby("pid").agg(apps=("game", "nunique"), sv=("SV", "sum"), outs=("outs", "sum"), pit=("PIT", "sum"))
         pen = []
         for pid, r in relagg.iterrows():
-            if last_team.get(pid) != abbr or pid not in pit_ids or (pid in rot[:5] and r.apps < 3) or status.get(pid):
+            if pid not in pit_ids or (pid in rot[:5] and r.apps < 3) or status.get(pid):
                 continue
             pr_ = pit_rates.get(pid)
             q = (pr_["k"] - pr_["bb"] - 3 * pr_["hr"] - (pr_["s"] + 2 * pr_["d"]) * 0.5) if pr_ else -0.2
@@ -417,7 +422,15 @@ def main():
                 prr = {k: base[k] * (0.9 if k == "k" else 1.1) for k in OUTCOMES}
                 prr.update({"gb": lg_gb, "_w": 0, "_n": 0})
             ps = b[(b.pid == pid0) & (b.GS == 1)].sort_values("date", ascending=False).head(10)
-            pitches = float(np.average(ps.PIT, weights=np.linspace(1.5, 0.6, len(ps)))) if len(ps) >= 2 else (lg_sp_pitches if role == "SP" else 25)
+            apps = b[(b.pid == pid0) & (b.BF > 0)].sort_values("date", ascending=False)
+            last10 = apps.head(10)
+            if len(ps) >= 2 and last10.GS.sum() >= 3:  # a real starter: his recent starts set the pitch count
+                pitches = float(np.average(ps.PIT, weights=np.linspace(1.5, 0.6, len(ps))))
+            elif len(last10) >= 2:  # opener / bulk man / reliever: how long his outings actually run
+                pitches = float(np.average(last10.PIT, weights=np.linspace(1.5, 0.6, len(last10))))
+            else:
+                pitches = lg_sp_pitches if role == "SP" else 25
+            recent_apps = [[r.date, int(r.PIT)] for r in apps.head(4).itertuples()]
             ppbf_rows = b[(b.pid == pid0) & (b.BF > 0)]
             ppbf = float((ppbf_rows.PIT.sum() + 300 * 3.9) / (ppbf_rows.BF.sum() + 300))
             cb = curbox[(curbox.pid == pid0) & (curbox.BF > 0)]
@@ -427,7 +440,7 @@ def main():
                 "id": pid, "name": player_name(pid0), "short": short_name(player_name(pid0)), "throws": hand_of(pid0, "throws"),
                 "pos": "P", "role": role, "mlbam": people.get(pid0, {}).get("mlbam"),
                 "r": [round(prr[k], 5) for k in OUTCOMES], "gb": round(prr["gb"], 4), "n": prr["_n"],
-                "pc": round(min(110, max(60, pitches)) if role == "SP" else pitches, 1), "ppbf": round(ppbf, 3),
+                "pc": round(min(110, max(15, pitches)), 1), "ppbf": round(ppbf, 3), "apps": recent_apps,
                 "last_start": last_start.get(pid0), "status": status.get(pid0, ""),
                 "avg": {"g": int(len(cb)), "gs": gs, "ip": f"{outs // 3}.{outs % 3}",
                         "era": round(27 * cb.pER.sum() / outs, 2) if outs else None,
