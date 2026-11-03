@@ -518,6 +518,7 @@ def main():
         "consts": {"hfa": 1.01, "adv": 1.0, "bip_hit": 0.97, "tto": 1.06, "sub": 0.06},
     }
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
+    write_logs(os.path.join(os.path.dirname(os.path.abspath(args.out)), "logs.json"), games, pa, box, teams, sched, twoway, cur, player_name, hand_of)
     old = None
     if os.path.exists(args.out):
         try:
@@ -529,6 +530,89 @@ def main():
     with open(args.out, "w") as f:
         json.dump(model, f, separators=(",", ":"))
     log(f"wrote {args.out} ({os.path.getsize(args.out) / 1e6:.2f} MB): {sum(len(t['players']) for t in teams.values())} players, {len(sched)} scheduled games")
+
+
+def write_logs(path, games, pa, box, teams, sched, twoway, cur, player_name, hand_of):
+    """Per-player recent game logs, season lines, L/R splits and batter-vs-starter history for the player cards.
+    Kept in a separate file that the site only loads when a player card is opened."""
+    gm = games.set_index("game")
+    sp_of = {}
+    for g in games.itertuples():
+        sp_of[(g.game, 0)] = g.h_sp  # the away team (side 0) faced the home starter
+        sp_of[(g.game, 1)] = g.a_sp
+    b = box.sort_values(["date", "game"], ascending=False)
+    pas = pa.copy()
+    pas["H"] = pas.ev.isin(["1B", "2B", "3B", "HR"]).astype(int)
+    pas["TB"] = pas.ev.map({"1B": 1, "2B": 2, "3B": 3, "HR": 4}).fillna(0).astype(int)
+    pas["AB"] = (~pas.ev.isin(["BB", "IBB", "HBP", "CI"]) & (pas.sf == 0) & (pas.sh == 0)).astype(int)
+    pas["HRc"] = (pas.ev == "HR").astype(int)
+    pas["BBc"] = pas.ev.isin(["BB", "IBB"]).astype(int)
+    pas["Kc"] = (pas.ev == "K").astype(int)
+    pas["OB"] = (pas.H + pas.BBc + (pas.ev == "HBP")).astype(int)
+    cur_pa = pas[pas.season == cur]
+
+    def short_opp(r):
+        return ("" if r.home else "@") + r.opp
+
+    def split_rows(df, key):
+        out = {}
+        for h, d in df.groupby(key):
+            out[h] = [int(len(d)), int(d.AB.sum()), int(d.H.sum()), int(d.TB.sum()), int(d.HRc.sum()), int(d.BBc.sum()), int(d.Kc.sum()), int(d.OB.sum())]
+        return out
+
+    # starters a hitter might face: every rotation arm and every scheduled starter
+    sp_ids = set()
+    for T in teams.values():
+        sp_ids |= {x.replace("-P", "") for x in T["rotation"]}
+    for g in sched:
+        sp_ids |= {str(g.get("away_sp") or "").replace("-P", ""), str(g.get("home_sp") or "").replace("-P", "")}
+    bvp_pa = pas[pas.pit.isin(sp_ids)]
+    bvp = {}
+    for (bat, pit), d in bvp_pa.groupby(["bat", "pit"]):
+        bvp.setdefault(bat, {})[pit] = [int(len(d)), int(d.AB.sum()), int(d.H.sum()), int(d.TB.sum()), int(d.HRc.sum()), int(d.BBc.sum()), int(d.Kc.sum())]
+    bat_split = {k: v for k, v in ((bat, split_rows(d, "phand")) for bat, d in cur_pa.groupby("bat"))}
+    pit_split = {k: v for k, v in ((pit, split_rows(d, "bhand")) for pit, d in cur_pa.groupby("pit"))}
+    by_pid = {pid: d for pid, d in b.groupby("pid", sort=False)}
+    out = {"season": int(cur), "fields": {
+        "hit": ["date", "opp", "vsSP", "spHand", "slot", "PA", "AB", "H", "2B", "3B", "HR", "R", "RBI", "BB", "K", "SB"],
+        "pit": ["date", "opp", "GS", "outs", "H", "R", "ER", "BB", "K", "HR", "PC", "dec"],
+        "split": ["PA", "AB", "H", "TB", "HR", "BB", "K", "OB"], "bvp": ["PA", "AB", "H", "TB", "HR", "BB", "K"]}, "p": {}}
+    names = {}
+    for T in teams.values():
+        for p in T["players"]:
+            pid = p["id"]
+            raw = pid[:-2] if pid.endswith("-P") else pid
+            d = by_pid.get(raw)
+            if d is None:
+                continue
+            if p["pos"] == "P":
+                d2 = d[d.BF > 0].head(20)
+                logs = []
+                for r in d2.itertuples():
+                    dec = "W" if r.W else "L" if r.L else "S" if r.SV else ""
+                    logs.append([r.date, short_opp(r), int(r.GS), int(r.outs), int(r.pH), int(r.pR), int(r.pER), int(r.pBB), int(r.pK), int(r.pHR), int(r.PIT), dec])
+                season = d[(d.season == cur) & (d.BF > 0)]
+                out["p"][pid] = {"logs": logs, "split": pit_split.get(raw, {}),
+                                 "tot": [int(len(season)), int(season.GS.sum()), int(season.outs.sum()), int(season.pH.sum()), int(season.pER.sum()), int(season.pBB.sum()), int(season.pK.sum()), int(season.pHR.sum()), int(season.PIT.sum())]}
+            else:
+                d2 = d[d.PA > 0].head(20)
+                logs = []
+                for r in d2.itertuples():
+                    sp = sp_of.get((r.game, int(r.side)))
+                    if sp and sp not in names:
+                        names[sp] = player_name(sp)
+                    logs.append([r.date, short_opp(r), sp or "", hand_of(sp, "throws") if sp else "", int(r.slot) if r.start else 0,
+                                 int(r.PA), int(r.AB), int(r.H), int(r.D), int(r.T), int(r.HR), int(r.R), int(r.RBI), int(r.BB), int(r.K), int(r.SB)])
+                season = d[(d.season == cur) & (d.PA > 0)]
+                out["p"][pid] = {"logs": logs, "split": bat_split.get(raw, {}), "bvp": bvp.get(raw, {}),
+                                 "tot": [int(len(season))] + [int(season[c].sum()) for c in ("PA", "AB", "H", "D", "T", "HR", "R", "RBI", "BB", "K", "SB", "HBP")]}
+    out["names"] = {k: v for k, v in names.items()}
+    for sp in sp_ids:
+        if sp and sp not in out["names"]:
+            out["names"][sp] = player_name(sp)
+    with open(path, "w") as f:
+        json.dump(out, f, separators=(",", ":"))
+    log(f"wrote {path} ({os.path.getsize(path) / 1e6:.2f} MB)")
 
 
 if __name__ == "__main__":

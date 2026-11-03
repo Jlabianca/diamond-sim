@@ -17,6 +17,14 @@ Pick a matchup and you can:
   - **Correlation**: the ratio of the two. Above 1× means the legs help each other (a team's ML and its hitters' overs); below 1× means they work against each other (a team's ML and the opposing starter's strikeouts).
   - **Fair odds and expected value** against each leg's book odds, or the book's same-game parlay price.
   - **Sharpen** re-runs every game 20,000 times for a tighter estimate. The slip is saved in your browser.
+- **Player cards**: click any player's name (props table, box score, at-bat panel, lineups) for his recent form. Pick a stat and a line, and the card shows:
+  - hit rates over that line for his last 5, 10 and 20 games, plus a game-by-game chart against the line;
+  - his full recent game log, including which starter he faced and where he hit in the order;
+  - his splits against lefties and righties this season;
+  - his history against today's starter over the last two seasons;
+  - the model's projection for today, with buttons to add the over or under to your parlay.
+
+  Game logs live in a separate file (`site/data/logs.json`) that only loads when a card is opened.
 - **Lineups & pitchers**: the posted lineup when it's out, otherwise each team's most recent lineup against a pitcher of that hand. Reorder it, swap hitters, change the starting pitcher, or mark hitters and relievers unavailable (a closer who threw three days in a row, say). Changes apply to both tabs.
 
 The site is fully static: one JSON model file and plain JavaScript, with no server. It's hosted on GitHub Pages, and a scheduled GitHub Action rebuilds the model from fresh MLB data three times a day.
