@@ -11,6 +11,12 @@ Pick a matchup and you can:
   - **Batter props**: H+R+RBI, hits, total bases, home runs, runs, RBIs, singles, doubles, walks, strikeouts, stolen bases and times on base.
   - **Pitcher props**: strikeouts, outs recorded, hits allowed, earned runs, walks, pitch count, home runs allowed and the win.
   - Type a sportsbook line to get the model's over/under probability and fair odds. *Download CSV* exports every player and every stat.
+- **Parlay builder**: add legs with the **+** buttons on any game line or prop: moneyline, run line, totals, F5, NRFI/YRFI, team totals and any batter or pitcher prop at any line. Legs can come from several games. The slip at the bottom of the screen shows:
+  - **All legs hit**: how often every leg wins together. Legs from the same game are scored together inside each simulated game, so correlation is built in. Different games multiply.
+  - **Legs multiplied**: the naive number you'd get treating the legs as unrelated.
+  - **Correlation**: the ratio of the two. Above 1× means the legs help each other (a team's ML and its hitters' overs); below 1× means they work against each other (a team's ML and the opposing starter's strikeouts).
+  - **Fair odds and expected value** against each leg's book odds, or the book's same-game parlay price.
+  - **Sharpen** re-runs every game 20,000 times for a tighter estimate. The slip is saved in your browser.
 - **Lineups & pitchers**: the posted lineup when it's out, otherwise each team's most recent lineup against a pitcher of that hand. Reorder it, swap hitters, change the starting pitcher, or mark hitters and relievers unavailable (a closer who threw three days in a row, say). Changes apply to both tabs.
 
 The site is fully static: one JSON model file and plain JavaScript, with no server. It's hosted on GitHub Pages, and a scheduled GitHub Action rebuilds the model from fresh MLB data three times a day.
@@ -65,7 +71,17 @@ Player props compare the model's mean with each player's season-to-date average 
 
 The probabilities are well calibrated for batter props: when the model says 45% for H+R+RBI over 1.5, it happens about 44% of the time. Pitcher strikeouts are the strongest prop. Hits allowed by starters run about 4 points too high.
 
-The model is only slightly better than simple baselines. Baseball is noisy, and closing lines weren't available to compare against here. **Bottom line: it's a sensible simulation, not a proven edge.** Treat a gap between the model and the market as a reason to dig in, not as a bet. The full output is in `backtest/results.md`. To rerun the backtest:
+**Same-game parlays.** The parlay builder's joint probabilities hold up. Across the same 751 games, the model's chance that a combo hits matched how often it really hit. Multiplying the legs as if they were unrelated was badly off:
+
+| Combo | Times tested | Model (joint) | Legs multiplied | Actually hit |
+|---|---|---|---|---|
+| Teammates batting back to back, both H+R+RBI o1.5 | 12,013 | 25.4% | 22.1% | 25.5% |
+| Team ML + one of its 2–4 hitters H+R+RBI o1.5 | 4,506 | 31.1% | 25.5% | 31.7% |
+| Team ML + its 2-3-4 hitters all H+R+RBI o1.5 | 1,502 | 13.5% | 6.7% | 15.6% |
+| Team ML + opposing starter's strikeouts over | 1,498 | 20.7% | 24.4% | 20.7% |
+| Game under 8.5 + NRFI | 751 | 29.7% | 24.7% | 29.3% |
+
+The model is only slightly better than simple baselines on single bets. Baseball is noisy, and closing lines weren't available to compare against here. **Bottom line: it's a sensible simulation, not a proven edge.** Treat a gap between the model and the market as a reason to dig in, not as a bet. The full output is in `backtest/results.md`. To rerun the backtest:
 
 ```bash
 git clone --depth 1 --filter=blob:none --sparse https://github.com/chadwickbureau/retrosheet data_raw/retrosheet

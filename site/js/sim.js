@@ -562,12 +562,64 @@
       const d = {};
       for (const k in P.d) d[k] = Array.from(P.d[k]).sort((a, b) => a - b);
       let apps = 0; if (P.d.app) for (const x of P.d.app) apps += x;
-      players[id] = { id: P.id, name: P.name, short: P.short, team: P.team, side: P.side, kind: P.kind, pos: P.pos, order: P.order, role: P.role, apps: P.d.app ? apps / n : 1, d };
+      players[id] = { id: P.id, name: P.name, short: P.short, team: P.team, side: P.side, kind: P.kind, pos: P.pos, order: P.order, role: P.role, apps: P.d.app ? apps / n : 1, d, raw: P.d };
     }
     return { n, wins: { home: homeWins, away: n - homeWins }, away: Array.from(agg.away), home: Array.from(agg.home), f5a: Array.from(agg.f5a), f5h: Array.from(agg.f5h), inn1: Array.from(agg.inn1), extra: Array.from(agg.extra), players, ties5 };
   }
 
-  const API = { assignPositions, simulateGame, simulateMany, summarize, prepare, defaults, defaultOut, guessStarter, guessLineup, index, rng, BAT_STATS, PIT_STATS };
+  // ------------------------------------------------------------ parlays
+  // A leg is a plain object; legHits returns, for every simulated game, 1 if the leg won, 0 if not (pushes count as 0).
+  //   {type:"prop", pid, stat, side:"o"|"u", line}        player prop
+  //   {type:"ml"|"f5ml", team:"away"|"home"}             moneyline / first-5 moneyline
+  //   {type:"rl", team, line}                            run line (team's margin + line > 0)
+  //   {type:"total"|"f5total", side, line}               game / first-5 total
+  //   {type:"tt", team, side, line}                      team total
+  //   {type:"nrfi"} / {type:"yrfi"}
+  function legHits(res, leg) {
+    const n = res.n, out = new Uint8Array(n);
+    const A = res.away, H = res.home;
+    const cmp = (v, side, line) => (side === "u" ? v < line : v > line);
+    if (leg.type === "prop") {
+      const P = res.players[leg.pid];
+      const arr = P && (P.raw || {})[leg.stat];
+      if (!arr) return null;
+      for (let i = 0; i < n; i++) out[i] = cmp(arr[i], leg.side, leg.line) ? 1 : 0;
+      return out;
+    }
+    for (let i = 0; i < n; i++) {
+      const my = leg.team === "home" ? H[i] : A[i], th = leg.team === "home" ? A[i] : H[i];
+      const f5my = leg.team === "home" ? res.f5h[i] : res.f5a[i], f5th = leg.team === "home" ? res.f5a[i] : res.f5h[i];
+      let w = false;
+      switch (leg.type) {
+        case "ml": w = my > th; break;
+        case "f5ml": w = f5my > f5th; break;
+        case "rl": w = my - th + leg.line > 0; break;
+        case "total": w = cmp(A[i] + H[i], leg.side, leg.line); break;
+        case "f5total": w = cmp(res.f5a[i] + res.f5h[i], leg.side, leg.line); break;
+        case "tt": w = cmp(my, leg.side, leg.line); break;
+        case "nrfi": w = res.inn1[i] === 0; break;
+        case "yrfi": w = res.inn1[i] > 0; break;
+        default: return null;
+      }
+      out[i] = w ? 1 : 0;
+    }
+    return out;
+  }
+  // joint probability of a set of legs from the same simulated game, plus each leg on its own
+  function parlayProb(res, legs) {
+    const n = res.n, all = new Uint8Array(n).fill(1), single = [];
+    for (const leg of legs) {
+      const h = legHits(res, leg);
+      if (!h) { single.push(null); continue; }
+      let c = 0;
+      for (let i = 0; i < n; i++) { c += h[i]; all[i] &= h[i]; }
+      single.push(c / n);
+    }
+    let j = 0; for (let i = 0; i < n; i++) j += all[i];
+    return { joint: j / n, single, n };
+  }
+
+  const API = { legHits, parlayProb, assignPositions, simulateGame, simulateMany, summarize, prepare, defaults, defaultOut, guessStarter, guessLineup, index, rng, BAT_STATS, PIT_STATS };
   if (typeof module !== "undefined" && module.exports) module.exports = API;
   else root.MLBSim = API;
 })(typeof self !== "undefined" ? self : this);

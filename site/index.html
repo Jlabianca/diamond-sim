@@ -113,7 +113,7 @@
         <label>Team <select id="teamFilter"><option value="">Both</option></select></label>
         <label class="chk"><input type="checkbox" id="penChk"> include relievers</label>
         <button id="btnCsv" title="Download every player's projections for every stat">Download CSV</button>
-        <span class="dim">Type the sportsbook line to get the model's over/under probability and fair odds.</span>
+        <span class="dim">Type the sportsbook line to get the model's over/under probability and fair odds. <b>+ O / + U</b> adds the leg to your parlay.</span>
       </div>
       <table class="props" id="propTable"></table>
     </div>
@@ -126,6 +126,8 @@
     <div class="rosters" id="rosters"></div>
   </section>
 </main>
+
+<div id="slip" class="slip hidden"><div class="slipbar mono" id="slipBar"></div><div class="slipbody" id="slipBody"></div></div>
 
 <footer class="mono dim" id="footer">
   Data: <a href="https://statsapi.mlb.com" target="_blank" rel="noopener">MLB Stats API</a> play-by-play, box scores, schedule, probable pitchers, lineups &amp; rosters; historical play-by-play from <a href="https://www.retrosheet.org" target="_blank" rel="noopener">Retrosheet</a> (free of charge from and copyrighted by Retrosheet, via the Chadwick Bureau). Not affiliated with MLB. For entertainment and research.

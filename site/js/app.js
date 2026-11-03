@@ -35,6 +35,7 @@
     $("srcNote").textContent = `DATA: ${src.toUpperCase()}`;
     initPicker(); initTabs(); initControls();
     fromHash() || selectGame(defaultGame());
+    renderSlip();
   }).catch((e) => { $("dataLine").textContent = "Could not load data/model.json — serve this folder over http (see README). " + e; console.error(e); });
 
   const todayET = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
@@ -663,26 +664,161 @@
   }
 
   // ---------------- projections ----------------
+  let jobId = 0;
+  const jobs = {};
+  function simRun(opts, n, onProg) { // queued runs in the web worker; resolves with the summarized result
+    return new Promise((resolve) => {
+      try {
+        if (!worker) {
+          worker = new Worker("js/worker.js");
+          const m2 = Object.assign({}, model); delete m2._idx;
+          worker.postMessage({ model: m2 });
+          worker.onmessage = (e) => {
+            const j = jobs[e.data.id]; if (!j) return;
+            if (e.data.progress != null && j.p) j.p(e.data.progress);
+            if (e.data.done) { delete jobs[e.data.id]; j.r(e.data.result); }
+          };
+        }
+        const id = ++jobId; jobs[id] = { r: resolve, p: onProg };
+        worker.postMessage({ run: true, id, opts, n });
+      } catch (err) { setTimeout(() => resolve(MLBSim.summarize(MLBSim.simulateMany(model, opts, n))), 30); }
+    });
+  }
   function runProjections() {
     if (!model || !game) { if (model) $("runInfo").textContent = "set lineups and starters first"; return; }
     const n = +$("nSel").value;
     const opts = simOpts({ seed: 12345 });
+    const gk = gameKey();
     $("btnRun").disabled = true; $("prog").style.width = "0%";
     $("runInfo").textContent = `simulating ${n.toLocaleString()} games…`;
     const t0 = performance.now();
-    const finish = (res) => {
+    simRun(opts, n, (p) => ($("prog").style.width = (p * 100).toFixed(0) + "%")).then((res) => {
+      resCache[gk] = res;
+      if (slip.groups[gk]) { slip.groups[gk].opts = JSON.parse(JSON.stringify(opts)); saveSlip(); }
+      if (gk !== gameKey()) { renderSlip(); return; } // the user switched games meanwhile
       projResult = res; projStale = false; $("btnRun").disabled = false; $("prog").style.width = "100%";
       $("runInfo").textContent = `${res.n.toLocaleString()} games in ${((performance.now() - t0) / 1000).toFixed(1)}s`;
       renderProjections();
-    };
-    try {
-      if (!worker) { worker = new Worker("js/worker.js"); const m2 = Object.assign({}, model); delete m2._idx; worker.postMessage({ model: m2 }); }
-      worker.onmessage = (e) => {
-        if (e.data.progress != null) $("prog").style.width = (e.data.progress * 100).toFixed(0) + "%";
-        if (e.data.done) finish(e.data.result);
-      };
-      worker.postMessage({ run: true, opts, n });
-    } catch (err) { setTimeout(() => finish(MLBSim.summarize(MLBSim.simulateMany(model, opts, n))), 30); }
+      renderSlip();
+    });
+  }
+
+  // ---------------- parlay builder ----------------
+  // Legs from the same game are scored together in each simulated game (so correlation is built in);
+  // different games are independent, so their probabilities multiply.
+  const resCache = {};
+  let slip = { legs: [], groups: {}, sgp: null, open: false };
+  try { const s = JSON.parse(localStorage.getItem("diamondsim.slip") || "null"); if (s && Array.isArray(s.legs)) slip = Object.assign(slip, s); } catch (e) { /* storage unavailable */ }
+  const saveSlip = () => { try { localStorage.setItem("diamondsim.slip", JSON.stringify({ legs: slip.legs, groups: slip.groups, sgp: slip.sgp, open: slip.open })); } catch (e) { /* ignore */ } };
+  const gameKey = () => (cur.sched ? cur.sched.id : `${cur.away}@${cur.home}`);
+  const STAT_NAME = { hrr: "H+R+RBI", h: "hits", tb: "total bases", hr: "HR", r: "runs", rbi: "RBI", s: "singles", d: "doubles", bb: "walks", k: "batter K", sb: "SB", onbase: "times on base", pk: "K", outs: "outs", ph: "hits allowed", er: "ER", pbb: "walks allowed", pc: "pitches", phr: "HR allowed", w: "win" };
+  function legLabel(leg) {
+    const T = (t) => (t === "home" ? leg.home : leg.away), ou = (s) => (s === "u" ? "u" : "o");
+    switch (leg.type) {
+      case "prop": return leg.stat === "w" ? `${leg.name} to get the win` : `${leg.name} ${STAT_NAME[leg.stat] || leg.stat} ${ou(leg.side)}${leg.line}`;
+      case "ml": return `${T(leg.team)} ML`;
+      case "f5ml": return `${T(leg.team)} F5 ML`;
+      case "rl": return `${T(leg.team)} ${fmtLine(leg.line)}`;
+      case "total": return `Total ${ou(leg.side)}${leg.line}`;
+      case "f5total": return `F5 total ${ou(leg.side)}${leg.line}`;
+      case "tt": return `${T(leg.team)} team total ${ou(leg.side)}${leg.line}`;
+      case "nrfi": return "NRFI"; case "yrfi": return "YRFI";
+    }
+    return "?";
+  }
+  function addLeg(leg) {
+    if (!projResult) return;
+    const gk = gameKey();
+    Object.assign(leg, { gkey: gk, away: cur.away, home: cur.home, book: null });
+    const sig = (l) => JSON.stringify([l.gkey, l.type, l.pid, l.stat, l.side, l.line, l.team]);
+    if (slip.legs.some((l) => sig(l) === sig(leg))) { flashSlip("Already in the parlay"); return; }
+    slip.legs.push(leg);
+    if (!slip.groups[gk]) slip.groups[gk] = { label: `${cur.away} @ ${cur.home}${cur.sched ? " · " + fmtDay(cur.sched.date) : ""}`, opts: JSON.parse(JSON.stringify(simOpts({ seed: 12345 }))), n: projResult.n };
+    resCache[gk] = resCache[gk] || projResult;
+    saveSlip(); renderSlip(); flashSlip(`Added: ${legLabel(leg)}`);
+  }
+  let flashT = null;
+  function flashSlip(msg) { const f = $("slipFlash"); if (!f) return; f.textContent = msg; f.classList.add("on"); clearTimeout(flashT); flashT = setTimeout(() => f.classList.remove("on"), 1600); }
+  const decOdds = (am) => (am == null ? null : am > 0 ? 1 + am / 100 : am < 0 ? 1 + 100 / -am : null);
+  const amFromDec = (d) => (d == null || d <= 1 ? "–" : d >= 2 ? "+" + Math.round((d - 1) * 100) : String(Math.round(-100 / (d - 1))));
+  function slipMath() {
+    let joint = 1, naive = 1, relVar = 0, missing = [], legP = {};
+    const byG = {};
+    for (const l of slip.legs) (byG[l.gkey] = byG[l.gkey] || []).push(l);
+    for (const gk in byG) {
+      const res = resCache[gk];
+      if (!res) { missing.push(gk); continue; }
+      const p = MLBSim.parlayProb(res, byG[gk]);
+      byG[gk].forEach((l, i) => (legP[slip.legs.indexOf(l)] = p.single[i]));
+      const valid = p.single.every((x) => x != null);
+      joint *= p.joint;
+      for (const x of p.single) if (x != null) naive *= x;
+      relVar += p.joint > 0 ? (1 - p.joint) / (p.joint * res.n) : 0;
+      if (!valid) missing.push(null);
+    }
+    let book = slip.legs.length && slip.legs.every((l) => l.book != null) ? slip.legs.reduce((d, l) => d * decOdds(l.book), 1) : null;
+    if (slip.sgp != null) book = decOdds(slip.sgp);
+    return { joint, naive, se: joint * Math.sqrt(relVar), missing, legP, book, ev: book != null && !missing.length ? joint * book - 1 : null, games: Object.keys(byG).length };
+  }
+  function renderSlip() {
+    const el = $("slip");
+    if (!el || !model) return;
+    document.body.classList.toggle("has-slip", slip.legs.length > 0);
+    if (!slip.legs.length) { el.classList.add("hidden"); return; }
+    el.classList.remove("hidden");
+    const m = slipMath(), ready = !m.missing.length;
+    const lift = m.naive > 0 ? m.joint / m.naive : 0;
+    const evTxt = m.ev == null ? "" : ` · EV <b class="${m.ev >= 0 ? "pos" : "neg"}">${m.ev >= 0 ? "+" : ""}${(m.ev * 100).toFixed(1)}%</b>`;
+    $("slipBar").innerHTML = `<span class="ttl">PARLAY</span><span>${slip.legs.length} leg${slip.legs.length === 1 ? "" : "s"}${m.games > 1 ? ` · ${m.games} games` : ""}</span>` +
+      (ready ? `<span>hits <b>${pct(m.joint)}</b></span><span>fair <b>${amFromDec(m.joint > 0 ? 1 / m.joint : null)}</b></span>${m.book ? `<span>book <b>${amFromDec(m.book)}</b>${evTxt}</span>` : ""}` : `<span class="dim">simulating…</span>`) +
+      `<span class="flash" id="slipFlash"></span><button id="slipToggle">${slip.open ? "Hide ▾" : "Show ▴"}</button>`;
+    let h = "";
+    const byG = {};
+    slip.legs.forEach((l, i) => (byG[l.gkey] = byG[l.gkey] || []).push([l, i]));
+    for (const gk in byG) {
+      h += `<div class="sg"><div class="sgh">${(slip.groups[gk] || {}).label || gk}${resCache[gk] ? ` <span class="dim">· ${resCache[gk].n.toLocaleString()} sims</span>` : ` <span class="dim">· simulating…</span>`}</div>`;
+      for (const [l, i] of byG[gk]) {
+        const p = m.legP[i];
+        h += `<div class="leg"><span>${legLabel(l)}</span><span class="dim">${p == null ? (resCache[gk] ? "not in this lineup" : "") : pct(p)}</span><span class="dim">${p ? american(p) : ""}</span>
+          <input type="number" step="1" placeholder="book odds" data-book="${i}" value="${l.book != null ? l.book : ""}"><button class="x" data-rm="${i}" title="Remove leg">×</button></div>`;
+      }
+      h += `</div>`;
+    }
+    const sum = ready ? `
+      <div class="sumgrid">
+        <div><div class="k">All legs hit</div><div class="v">${pct(m.joint)}</div><div class="s">± ${(m.se * 100).toFixed(1)} pts (sim noise) · fair ${amFromDec(m.joint > 0 ? 1 / m.joint : null)}</div></div>
+        <div><div class="k">Legs multiplied</div><div class="v">${pct(m.naive)}</div><div class="s">what you'd get treating the legs as unrelated</div></div>
+        <div><div class="k">Correlation</div><div class="v ${lift > 1.03 ? "pos" : lift < 0.97 ? "neg" : ""}">${lift.toFixed(2)}×</div><div class="s">${lift > 1.03 ? "these legs help each other" : lift < 0.97 ? "these legs work against each other" : "about independent"}</div></div>
+        <div><div class="k">Book price</div><div class="v">${m.book ? amFromDec(m.book) : "–"}</div><div class="s">${slip.sgp != null ? "the book's same-game price you entered" : m.book ? "each leg's odds multiplied" : "enter each leg's odds, or the book's parlay price:"} <label>Parlay price <input type="number" step="1" id="sgpIn" placeholder="+600" value="${slip.sgp != null ? slip.sgp : ""}"></label></div></div>
+        <div><div class="k">Expected value</div><div class="v ${m.ev == null ? "" : m.ev >= 0 ? "pos" : "neg"}">${m.ev == null ? "–" : (m.ev >= 0 ? "+" : "") + (m.ev * 100).toFixed(1) + "%"}</div><div class="s">${m.ev == null ? "needs a book price" : `per $1: model says ${m.ev >= 0 ? "profit" : "loss"} of $${Math.abs(m.ev).toFixed(2)} on average`}</div></div>
+      </div>` : `<p class="dim">Simulating the games in this parlay…</p>`;
+    $("slipBody").innerHTML = h + sum + `<div class="slipbtns"><button id="slipSharpen" title="Re-run every game in the parlay 20,000 times for a tighter estimate">Sharpen (20,000 sims)</button><button id="slipClear">Clear parlay</button>
+      <span class="dim small">Same-game legs are scored together inside each simulated game, so correlation is built in. Different games multiply. Pushes count as misses.</span></div>`;
+    $("slipBody").classList.toggle("hidden", !slip.open);
+    $("slipToggle").onclick = () => { slip.open = !slip.open; saveSlip(); renderSlip(); };
+    $("slipBody").querySelectorAll("button[data-rm]").forEach((b) => (b.onclick = () => { slip.legs.splice(+b.dataset.rm, 1); pruneGroups(); saveSlip(); renderSlip(); }));
+    $("slipBody").querySelectorAll("input[data-book]").forEach((inp) => (inp.onchange = () => { slip.legs[+inp.dataset.book].book = num(inp.value); saveSlip(); renderSlip(); }));
+    const sg = $("sgpIn"); if (sg) sg.onchange = () => { slip.sgp = num(sg.value); saveSlip(); renderSlip(); };
+    $("slipClear").onclick = () => { slip.legs = []; slip.groups = {}; slip.sgp = null; saveSlip(); renderSlip(); };
+    $("slipSharpen").onclick = () => sharpen(20000);
+    if (m.missing.some((x) => x)) simMissing();
+  }
+  function pruneGroups() { for (const gk in slip.groups) if (!slip.legs.some((l) => l.gkey === gk)) delete slip.groups[gk]; }
+  let simBusy = false;
+  async function simMissing() {
+    if (simBusy) return; simBusy = true;
+    for (const gk in slip.groups) {
+      const g = slip.groups[gk];
+      if (resCache[gk] || !g.opts || !model.teams[g.opts.away] || !model.teams[g.opts.home]) continue;
+      resCache[gk] = await simRun(g.opts, g.n || 5000);
+    }
+    simBusy = false; renderSlip();
+  }
+  async function sharpen(n) {
+    if (simBusy) return; simBusy = true;
+    $("slipSharpen").disabled = true; $("slipSharpen").textContent = "Simulating…";
+    for (const gk in slip.groups) { const g = slip.groups[gk]; g.n = n; resCache[gk] = await simRun(g.opts, n); }
+    simBusy = false; saveSlip(); renderSlip();
   }
 
   const pct = (x) => (x * 100).toFixed(1) + "%";
@@ -710,33 +846,39 @@
     const f5H = f5m.filter((x) => x > 0).length / n, f5A = f5m.filter((x) => x < 0).length / n;
     const mlA = num($("mMlA").value), mlH = num($("mMlH").value);
     const edge = (p, ml) => { const q = implied(ml); return q == null ? "" : ` · book ${pct(q)} (${p - q >= 0 ? "+" : ""}${((p - q) * 100).toFixed(1)})`; };
+    const L = (o) => JSON.stringify(o).replace(/"/g, "&quot;");
+    const add = (lbl, leg) => `<button class="addb" data-leg="${L(leg)}" title="Add to parlay">+ ${lbl}</button>`;
+    const totLine = num($("mTotal").value) != null ? num($("mTotal").value) : Math.floor(meanOf(total)) + 0.5;
+    const f5Line = num($("mF5").value) != null ? num($("mF5").value) : Math.floor(meanOf(f5t)) + 0.5;
     const cards = [
-      [`${A} win`, pct(pA), `fair ${american(pA)}${edge(pA, mlA)}`],
-      [`${H} win`, pct(pH), `fair ${american(pH)}${edge(pH, mlH)}`],
-      ["Avg score", `${meanOf(r.away).toFixed(2)}–${meanOf(r.home).toFixed(2)}`, `${A}–${H} · median total ${quant(sortedTotal, 0.5)}`],
-      ["First 5 innings", `${(f5A * 100).toFixed(0)}% / ${(f5H * 100).toFixed(0)}%`, `${A} / ${H} · tie ${pct(1 - f5A - f5H)} · avg total ${meanOf(f5t).toFixed(2)}`],
-      ["NRFI", pct(nrfi), `fair ${american(nrfi)} · YRFI ${pct(1 - nrfi)} (${american(1 - nrfi)})`],
-      ["Extra innings", pct(meanOf(r.extra)), `${Math.round(meanOf(r.extra) * n).toLocaleString()} of ${n.toLocaleString()} games`],
+      [`${A} win`, pct(pA), `fair ${american(pA)}${edge(pA, mlA)}`, add(`${A} ML`, { type: "ml", team: "away" })],
+      [`${H} win`, pct(pH), `fair ${american(pH)}${edge(pH, mlH)}`, add(`${H} ML`, { type: "ml", team: "home" })],
+      ["Avg score", `${meanOf(r.away).toFixed(2)}–${meanOf(r.home).toFixed(2)}`, `${A}–${H} · median total ${quant(sortedTotal, 0.5)}`, add(`o${totLine}`, { type: "total", side: "o", line: totLine }) + add(`u${totLine}`, { type: "total", side: "u", line: totLine })],
+      ["First 5 innings", `${(f5A * 100).toFixed(0)}% / ${(f5H * 100).toFixed(0)}%`, `${A} / ${H} · tie ${pct(1 - f5A - f5H)} · avg total ${meanOf(f5t).toFixed(2)}`, add(`${A} F5`, { type: "f5ml", team: "away" }) + add(`${H} F5`, { type: "f5ml", team: "home" }) + add(`F5 o${f5Line}`, { type: "f5total", side: "o", line: f5Line }) + add(`F5 u${f5Line}`, { type: "f5total", side: "u", line: f5Line })],
+      ["NRFI", pct(nrfi), `fair ${american(nrfi)} · YRFI ${pct(1 - nrfi)} (${american(1 - nrfi)})`, add("NRFI", { type: "nrfi" }) + add("YRFI", { type: "yrfi" })],
+      ["Extra innings", pct(meanOf(r.extra)), `${Math.round(meanOf(r.extra) * n).toLocaleString()} of ${n.toLocaleString()} games`, ""],
     ];
     const rl = num($("mRl").value);
     if (rl != null) {
       const cover = margin.filter((m) => m + rl > 0).length / n, push = margin.filter((m) => m + rl === 0).length / n;
-      cards.push([`${H} ${fmtLine(rl)}`, pct(cover), `${A} ${fmtLine(-rl)} ${pct(1 - cover - push)}${push ? ` · push ${pct(push)}` : ""} · fair ${american(cover)}`]);
+      cards.push([`${H} ${fmtLine(rl)}`, pct(cover), `${A} ${fmtLine(-rl)} ${pct(1 - cover - push)}${push ? ` · push ${pct(push)}` : ""} · fair ${american(cover)}`, add(`${H} ${fmtLine(rl)}`, { type: "rl", team: "home", line: rl }) + add(`${A} ${fmtLine(-rl)}`, { type: "rl", team: "away", line: -rl })]);
     }
     const tl = num($("mTotal").value);
     if (tl != null) {
       const o = total.filter((t) => t > tl).length / n, u = total.filter((t) => t < tl).length / n;
-      cards.push([`Over ${tl}`, pct(o), `under ${pct(u)}${o + u < 0.999 ? ` · push ${pct(1 - o - u)}` : ""} · fair over ${american(o)} / under ${american(u)}`]);
+      cards.push([`Over ${tl}`, pct(o), `under ${pct(u)}${o + u < 0.999 ? ` · push ${pct(1 - o - u)}` : ""} · fair over ${american(o)} / under ${american(u)}`, ""]);
     }
     const f5l = num($("mF5").value);
     if (f5l != null) {
       const o = f5t.filter((t) => t > f5l).length / n, u = f5t.filter((t) => t < f5l).length / n;
-      cards.push([`F5 over ${f5l}`, pct(o), `under ${pct(u)} · fair over ${american(o)}`]);
+      cards.push([`F5 over ${f5l}`, pct(o), `under ${pct(u)} · fair over ${american(o)}`, ""]);
     }
-    const tt = (arr) => { const m = meanOf(arr); const l = Math.floor(m) + 0.5; return `${m.toFixed(2)} · o${l} ${pct(arr.filter((x) => x > l).length / n)}`; };
-    cards.push([`${A} team total`, tt(r.away).split(" · ")[0], tt(r.away).split(" · ")[1]]);
-    cards.push([`${H} team total`, tt(r.home).split(" · ")[0], tt(r.home).split(" · ")[1]]);
-    $("gameCards").innerHTML = cards.map(([k, v, s]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("");
+    for (const [t, arr, side] of [[A, r.away, "away"], [H, r.home, "home"]]) {
+      const m = meanOf(arr), l = Math.floor(m) + 0.5;
+      cards.push([`${t} team total`, m.toFixed(2), `o${l} ${pct(arr.filter((x) => x > l).length / n)}`, add(`o${l}`, { type: "tt", team: side, side: "o", line: l }) + add(`u${l}`, { type: "tt", team: side, side: "u", line: l })]);
+    }
+    $("gameCards").innerHTML = cards.map(([k, v, s, b]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div>${b ? `<div class="adds">${b}</div>` : ""}</div>`).join("");
+    $("gameCards").querySelectorAll("button[data-leg]").forEach((b) => (b.onclick = () => addLeg(JSON.parse(b.dataset.leg))));
     $("marginTitle").textContent = `${H} run margin`;
     hist($("marginChart"), margin, -12, 12, 1, rl != null ? -rl : null, 2, rl != null ? `${H} ${fmtLine(rl)}` : "");
     hist($("totalChart"), total, 0, 24, 1, tl, 2, tl != null ? `o/u ${tl}` : "");
@@ -779,11 +921,12 @@
     const isP = PIT_KEYS.has(k);
     const nameCell = (p) => `<td>${isP ? "" : p.order + ". "}${p.name}<span class="pos">${isP ? p.role : posOver[p.id] || P(p.id).pos || ""}</span></td><td><span class="teamtag" style="background:${col(p.team)}"></span>${p.team}</td>`;
     if (YESNO.has(k)) {
-      $("propTable").innerHTML = `<tr><th>Player</th><th>Team</th><th>Appears</th><th>Probability</th><th>Fair yes</th><th>Fair no</th></tr>` +
-        rows.map(({ p, m }) => `<tr>${nameCell(p)}<td>${pct(p.apps)}</td><td>${pct(m)}</td><td>${american(m)}</td><td>${american(1 - m)}</td></tr>`).join("");
+      $("propTable").innerHTML = `<tr><th>Player</th><th>Team</th><th>Appears</th><th>Probability</th><th>Fair yes</th><th>Fair no</th><th>Parlay</th></tr>` +
+        rows.map(({ p, m }) => `<tr>${nameCell(p)}<td>${pct(p.apps)}</td><td>${pct(m)}</td><td>${american(m)}</td><td>${american(1 - m)}</td><td><button class="addb" data-pid="${p.id}" data-side="o" data-line="0.5">+ Yes</button></td></tr>`).join("");
+      wireAdds(k);
       return;
     }
-    $("propTable").innerHTML = `<tr><th>Player</th><th>Team</th><th>${isP ? "Appears" : "P(≥1)"}</th><th>Mean</th><th>Median</th><th>10th–90th</th><th>Line</th><th>Over</th><th>Under</th><th>Fair over</th><th>Fair under</th></tr>` +
+    $("propTable").innerHTML = `<tr><th>Player</th><th>Team</th><th>${isP ? "Appears" : "P(≥1)"}</th><th>Mean</th><th>Median</th><th>10th–90th</th><th>Line</th><th>Over</th><th>Under</th><th>Fair over</th><th>Fair under</th><th>Parlay</th></tr>` +
       rows.map(({ p, d, m }) => {
         const key = p.id + "|" + k;
         const user = lines[key] != null;
@@ -792,11 +935,19 @@
         const oc = user && o >= 0.56 ? "edge-hi" : "", uc = user && u >= 0.56 ? "edge-lo" : "";
         return `<tr>${nameCell(p)}<td>${isP ? pct(p.apps) : pct(pOver(d, 0.5))}</td><td>${m.toFixed(2)}</td><td>${quant(d, 0.5)}</td><td>${quant(d, 0.1)}–${quant(d, 0.9)}</td>
           <td><input data-key="${key}" type="number" step="0.5" value="${line}"></td>
-          <td class="${oc}">${pct(o)}</td><td class="${uc}">${pct(u)}</td><td>${american(o)}</td><td>${american(u)}</td></tr>`;
+          <td class="${oc}">${pct(o)}</td><td class="${uc}">${pct(u)}</td><td>${american(o)}</td><td>${american(u)}</td>
+          <td class="adds"><button class="addb" data-pid="${p.id}" data-side="o" data-line="${line}" title="Add the over to the parlay">+ O</button><button class="addb" data-pid="${p.id}" data-side="u" data-line="${line}" title="Add the under to the parlay">+ U</button></td></tr>`;
       }).join("");
+    wireAdds(k);
     $("propTable").querySelectorAll("input").forEach((inp) => (inp.onchange = () => {
       if (inp.value === "") delete lines[inp.dataset.key]; else lines[inp.dataset.key] = +inp.value;
       renderProps();
+    }));
+  }
+  function wireAdds(k) {
+    $("propTable").querySelectorAll("button[data-pid]").forEach((b) => (b.onclick = () => {
+      const p = projResult.players[b.dataset.pid];
+      addLeg({ type: "prop", pid: p.id, name: p.short || p.name, stat: k, side: b.dataset.side, line: +b.dataset.line });
     }));
   }
   function downloadCsv() {
