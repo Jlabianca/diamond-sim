@@ -19,7 +19,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Offseason idle: scheduled runs between Nov 15 and Feb 14 stop here, so nothing is rebuilt or redeployed
+  # and the site keeps its last version. Manual runs ("Run workflow") and pushes always do a full update.
+  season:
+    runs-on: ubuntu-latest
+    outputs:
+      active: ${{ steps.check.outputs.active }}
+    steps:
+      - id: check
+        run: |
+          md=$(TZ=America/New_York date +%m%d)
+          if [ "${{ github.event_name }}" = "schedule" ] && { [ "$md" -ge 1115 ] || [ "$md" -lt 0215 ]; }; then
+            echo "active=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Offseason (Nov 15 - Feb 14): skipping the scheduled update. Use Run workflow to force one."
+          else
+            echo "active=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: season
+    if: needs.season.outputs.active == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

@@ -117,7 +117,7 @@ The first build downloads two seasons of games (about 10,000 small requests, sev
 ## Deploy on GitHub Pages
 
 1. In the repo, go to **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**.
-2. The workflow in `.github/workflows/update.yml` runs on every push and three times a day: about 9am ET for last night's results and probable pitchers, and 3:40pm and 5:40pm ET for posted lineups. You can also run it on demand from the **Actions** tab. It rebuilds the model and deploys the site to `https://<you>.github.io/<repo>/`. If the MLB Stats API is unreachable, it deploys the model already in the repo.
+2. The workflow in `.github/workflows/update.yml` runs on every push and three times a day: about 9am ET for last night's results and probable pitchers, and 3:40pm and 5:40pm ET for posted lineups. You can also run it on demand from the **Actions** tab. It rebuilds the model and deploys the site to `https://<you>.github.io/<repo>/`. In the offseason (Nov 15 – Feb 14) the scheduled runs skip the update and the site keeps its last version; manual runs and pushes still update it. If the MLB Stats API is unreachable, it deploys the model already in the repo.
 
 ## Known limitations / ideas
 
